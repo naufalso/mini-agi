@@ -24,6 +24,7 @@ from commands import Commands
 from exceptions import InvalidLLMResponseError
 from langchain_community.llms import HuggingFaceTextGenInference
 
+import argparse
 
 operating_system = platform.platform()
 
@@ -55,17 +56,19 @@ The mandatory action format is:
 <r>[YOUR_REASONING]</r><c>[COMMAND]</c>
 [ARGUMENT]
 
-ingest_data and process_data cannot process multiple file/url arguments. Specify 1 at a time.
-Use process_data to process large amounts of data with a larger context window.
-Python code run with execute_python must end with an output "print" statement.
-Do not search the web for information that GPT3/GPT4 already knows.
-Use memorize_thoughts to organize your thoughts.
-memorize_thoughts argument must not be empty!
+The command is case-sensitive and must be one of the exact supported commands.
+`ingest_data` and `process_data` cannot process multiple file/url arguments. Specify 1 at a time.
+Use `process_data` to process large amounts of data with a larger context window.
+Python code run with `execute_python` must end with an output "print" statement.
+Python code run with `execute_python` must be have the correct syntax, complete, and executable in a single time.
+Do not search the web for information that you already knows.
+Use `memorize_thoughts` to organize your thoughts.
+`memorize_thoughts` argument must not be empty!
 Send the "done" command if the objective was achieved.
-RESPOND WITH EXACTLY ONE THOUGHT/COMMAND/ARG COMBINATION.
 DO NOT CHAIN MULTIPLE COMMANDS.
 NO EXTRA TEXT BEFORE OR AFTER THE COMMAND.
 DO NOT REPEAT PREVIOUSLY EXECUTED COMMANDS.
+YOU MUST RESPOND WITH EXACTLY ONE ACTION (THOUGHT/COMMAND/ARG COMBINATION) AT A TIME!!!
 
 Each action returns an observation. Important: Observations may be summarized to fit into your limited memory.
 
@@ -326,14 +329,14 @@ class MiniAGI:
         context = self.__get_context()
 
         if self.debug:
-            print(context)
+            print(f"==================> Context:\n{context}\n")
 
         response_text = self.agent.predict(
             prompt=PROMPT.format(context=context, objective=self.objective)
-        )
+        ).strip()
 
         if self.debug:
-            print(f"RAW RESPONSE:\n{response_text}")
+            print(f"=============> RAW RESPONSE:\n{response_text}")
 
         PATTERN = r"^<r>(.*?)</r><c>(.*?)</c>\n*(.*)$"
 
@@ -346,8 +349,11 @@ class MiniAGI:
         except Exception as exc:
             raise InvalidLLMResponseError from exc
 
-        # Remove unwanted code formatting backticks
+        # Remove unwanted code formatting backtick
         _arg = _arg.replace("```", "")
+
+        # Remove any backslashes from the command
+        _command = _command.replace("\\", "")
 
         self.thought = _thought
         self.proposed_command = _command
@@ -465,7 +471,14 @@ class MiniAGI:
         elif command == "ingest_data":
             obs = self.__ingest_data(self.proposed_arg)
         else:
+            print(
+                f"=================> ACT -> Executing command: {self.proposed_command}"
+            )
+
+            print(f"=================> ACT -> Argument: {self.proposed_arg}")
             obs = Commands.execute_command(self.proposed_command, self.proposed_arg)
+
+            print(f"=================> ACT -> Observation: {obs}")
 
         self.__update_memory(f"{self.proposed_command}\n{self.proposed_arg}", obs)
         self.criticism = ""
@@ -495,38 +508,72 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 if __name__ == "__main__":
 
-    PROMPT_USER = get_bool_env("PROMPT_USER")
-    ENABLE_CRITIC = get_bool_env("ENABLE_CRITIC")
+    parser = argparse.ArgumentParser(description="MiniAGI")
+    parser.add_argument(
+        "objective", type=str, help="The objective the agent is working towards"
+    )
+    parser.add_argument(
+        "--model", type=str, help="Path to the agent model", default="gpt-3.5-turbo"
+    )
+    parser.add_argument(
+        "--summarizer_model",
+        type=str,
+        help="Path to the summarizer model",
+        default="gpt-3.5-turbo",
+    )
+    parser.add_argument(
+        "--max_context_size",
+        default=16000,
+        type=int,
+        help="The maximum size of the agent's short-term memory (in tokens)",
+    )
+    parser.add_argument(
+        "--max_memory_item_size",
+        default=8192,
+        type=int,
+        help="The maximum size of a memory item (in tokens)",
+    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument(
+        "--prompt_user", action="store_true", help="Prompt user for input"
+    )
+    parser.add_argument(
+        "--enable_critic", action="store_true", help="Enable critic mode"
+    )
+    parser.add_argument(
+        "--work_dir", type=str, default="./workdirs/", help="Working directory"
+    )
 
-    if len(sys.argv) != 2:
-        print("Usage: miniagi.py <objective>")
-        sys.exit(0)
+    args = parser.parse_args()
 
-    work_dir = os.getenv("WORK_DIR")
+    if args.work_dir is None or not args.work_dir:
+        args.work_dir = os.path.join(Path.home(), "miniagi")
+        if not os.path.exists(args.work_dir):
+            os.makedirs(args.work_dir)
 
-    if work_dir is None or not work_dir:
-        work_dir = os.path.join(Path.home(), "miniagi")
-        if not os.path.exists(work_dir):
-            os.makedirs(work_dir)
-
-    print(f"Working directory is {work_dir}")
+    # print(f"==========> Working directory is {args.work_dir}")
 
     try:
-        os.chdir(work_dir)
+        os.chdir(args.work_dir)
     except FileNotFoundError:
         print(
             "Directory doesn't exist. Set WORK_DIR to an existing directory or leave it blank."
         )
         sys.exit(0)
 
+    # print("==========> Working directory is set to", os.getcwd())
+
     miniagi = MiniAGI(
-        os.getenv("MODEL"),
-        os.getenv("SUMMARIZER_MODEL"),
-        sys.argv[1],
-        int(os.getenv("MAX_CONTEXT_SIZE")),
-        int(os.getenv("MAX_MEMORY_ITEM_SIZE")),
-        get_bool_env("DEBUG"),
+        args.model,
+        args.summarizer_model,
+        args.objective,
+        args.max_context_size,
+        args.max_memory_item_size,
+        args.debug,
     )
+
+    PROMPT_USER = args.prompt_user
+    ENABLE_CRITIC = args.enable_critic
 
     while True:
 

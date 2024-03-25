@@ -10,6 +10,7 @@ from duckduckgo_search import DDGS
 
 # pylint: disable=broad-exception-caught, exec-used, unspecified-encoding
 
+
 class Commands:
     """
     A collection of static methods that can execute different commands.
@@ -25,9 +26,10 @@ class Commands:
             arg (str): The argument to be passed to the command.
 
         Returns:
-            str: The result of the command execution, or an error 
+            str: The result of the command execution, or an error
                  message if an exception is raised during execution.
         """
+
         try:
             match command:
                 case "memorize_thoughts":
@@ -39,7 +41,7 @@ class Commands:
                 case "web_search":
                     result = Commands.web_search(arg)
                 case _:
-                    result = f"Unknown command: {command}"
+                    result = f"Unknown command: {command}. Please use one of the following commands: memorize_thoughts, execute_python, execute_shell, web_search."
         except Exception as exception:
             result = f"Command returned an error:\n{str(exception)}"
 
@@ -69,6 +71,12 @@ class Commands:
         Returns:
             str: The stdout produced by the executed Python code.
         """
+        # Remove the "python" prefix if present
+        if arg.startswith("python"):
+            arg = arg[6:]
+
+        # print("===========> Executing Python code:", arg)
+
         _stdout = StringIO()
         with redirect_stdout(_stdout):
             exec(arg)
@@ -86,6 +94,7 @@ class Commands:
         Returns:
             str: The stdout and stderr produced by the executed shell command.
         """
+        # print("===========> Executing shell command:", arg)
         result = subprocess.run(arg, capture_output=True, shell=True, check=False)
 
         stdout = result.stdout.decode("utf-8")
